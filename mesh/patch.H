@@ -130,6 +130,20 @@ class Patch : public DATA_ITEM, public APPEAR, public RefImageClient {
 
    virtual ~Patch();
 
+   //******** KEY/LOOKUP ********
+
+   //! \brief A small integer that uniquely identifies this Patch.
+   //!
+   //! Used where a Patch has to be encoded in 32 bits -- e.g. packed into
+   //! an RGBA pixel by the ID reference image. The Patch pointer itself
+   //! cannot be used for that on 64-bit builds. Mirrors Bsimplex::key().
+   uint key() const { return _key ? _key : ((Patch*)this)->generate_key(); }
+
+   //! \brief Recover a Patch from the value returned by key().
+   static Patch* lookup(uint k) {
+      return (k < (uint)_key_table.num()) ? _key_table[k] : 0;
+   }
+
    //! \name Accessors
    //@{
       
@@ -536,7 +550,17 @@ class Patch : public DATA_ITEM, public APPEAR, public RefImageClient {
 
    //******** PROTECTED ********
  protected:
-   
+
+   //! \brief Table for looking up a Patch from its key() value. Slot 0 holds
+   //! a null entry, so a key of 0 always looks up null.
+   class KeyTable : public ARRAY<Patch*> {
+    public:
+      KeyTable(int max) : ARRAY<Patch*>(max) { *this += (Patch*)0; }
+   };
+   static KeyTable   _key_table;
+   uint              _key;              //!< unique id for looking up this Patch
+   uint generate_key();
+
    BMESH*            _mesh;             //!< owner
    
    Bface_list        _faces;            //!< unordered faces

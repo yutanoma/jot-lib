@@ -38,6 +38,10 @@ ifeq ($(ARCH),linux)
 LIBRARYDFLAGS := $(LIBRARYDFLAGS) -DPNG_THREAD_UNSAFE_OK
 endif
 
+ifeq ($(ARCH),macosx)
+LIBRARYDFLAGS := $(LIBRARYDFLAGS) -DPNG_THREAD_UNSAFE_OK
+endif
+
 
 #Compile as C (not C++)
 ifeq ($(ARCH),WIN32)
@@ -45,6 +49,11 @@ FINALCFLAGS   := $(FINALCFLAGS) -Tc
 endif
 ifeq ($(ARCH),linux)
 FINALCFLAGS   := $(FINALCFLAGS) -x c
+endif
+ifeq ($(ARCH),macosx)
+FINALCFLAGS   := $(FINALCFLAGS) -x c
+# These are C sources: drop the C++ -std flag.
+JOT_CXXSTD    :=
 endif
 
 

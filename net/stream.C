@@ -81,7 +81,7 @@ STDdstream::STDdstream(ostream* s):
 char
 STDdstream::peekahead()         
 { 
-   char c;
+   char c = '\0';
    if (istr()) 
    {
       //This is sometimes used to entice an EOF
@@ -92,9 +92,17 @@ STDdstream::peekahead()
       
       (*this) >> c;
       
-      if (fail() && eof() && was_good)
+      if (fail())
       {
-         _fail = STD_FALSE;
+         if (eof() && was_good)
+            _fail = STD_FALSE;
+
+         // Nothing was read, so c holds no character to put back. Returning
+         // early also leaves the stream's eofbit set: putback() is specified
+         // to clear eofbit, which would hide the end of input from eof() and
+         // leave callers such as DATA_ITEM::decode()'s `while (d)` spinning
+         // forever at the end of a file.
+         return '\0';
       }
 
       istr()->putback(c);
@@ -365,6 +373,10 @@ operator >> (STDdstream &ds, str_ptr &data)
 
    if (ds.ascii()) 
    {
+      // A failed extraction leaves the buffer untouched (it is not
+      // null-terminated for us), so start it empty: otherwise a read past
+      // the end of a file yields a "string" of uninitialized stack bytes.
+      usebuff[0] = '\0';
       *ds.istr() >> usebuff;
       ds._fail = ((ds.istr()->fail())?(STD_TRUE):(STD_FALSE));
       data = str_ptr(usebuff);

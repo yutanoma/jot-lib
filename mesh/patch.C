@@ -44,9 +44,27 @@ static const bool patch_d2d =
 static const bool debug_samples =
    Config::get_var_bool("DEBUG_D2D_SAMPLES",false);
 
+// Table for looking up a Patch from its key(); slot 0 is the null entry.
+Patch::KeyTable Patch::_key_table(1<<10);
+
+uint
+Patch::generate_key()
+{
+   // Called once, the first time key() is accessed, to assign this
+   // Patch its permanent key. (Mirrors Bsimplex::generate_key().)
+   if (_key_table.num() >= ((1<<23) - 1)) {
+      err_msg("Patch::generate_key: error: key table is full");
+   } else {
+      _key = _key_table.num();
+      _key_table += this;
+   }
+   return _key;
+}
+
 //********************** MANAGERS **********************
 Patch::Patch(BMESH* mesh) :
    _mesh(mesh),
+   _key(0),
    _faces(0),
    _creases(0),
    _borders(0),   
@@ -103,6 +121,11 @@ Patch::Patch(BMESH* mesh) :
 
 Patch::~Patch()
 {
+   // Release our slot in the key table so a stale key can't resolve
+   // to a deleted Patch:
+   if (_key && _key < (uint)_key_table.num())
+      _key_table[_key] = 0;
+
    //XXX - Moved this up here...
    _textures.delete_all();
 

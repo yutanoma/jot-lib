@@ -31,8 +31,9 @@ TAGlist *CLASS_NAME::_##CLASS_NAME##tags = 0; \
 static int CLASS_NAME##st=DECODER_ADD(CLASS_NAME);
 
 class COLOR;
-class mlib::Wvec;
-class mlib::Wpt;
+// A nested-name-specifier is not allowed in a forward declaration;
+// reopen the namespace instead.
+namespace mlib { class Wvec; class Wpt; }
 extern Cstr_ptr  NAME_INT;
 extern Cstr_ptr  NAME_DOUBLE;
 extern Cstr_ptr  NAME_COLOR;

@@ -32,8 +32,11 @@ DIRS_jot = dev disp dlhandler ffs geom gest glew glui glut_jot glut_winsys \
         gtex gui base_jotapp manip map3d mesh mlib net npr pattern std stroke \
         tess widgets wnpr libpng zlib triangle sps proxy_pattern 
 
-DIRS_smview = dev disp dlhandler geom gest glew glui glut_jot glut_winsys \
-        gtex base_jotapp manip mesh mlib net std widgets libpng zlib
+# NOTE: sps is in src/Makefile's PROG_2JOT_LIBS (smview links libsps.a),
+# but was missing from this list, so `make smview` failed to build it.
+DIRS_smview = dev disp dlhandler ffs geom gest glew glui glut_jot glut_winsys \
+        gtex gui base_jotapp manip map3d mesh mlib net npr pattern proxy_pattern \
+        sps std stroke tess triangle widgets wnpr libpng zlib
 
 # Setup program targets
 PROGS         = $(NORMPROGS) $(SPECPROGS)

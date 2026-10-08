@@ -132,12 +132,12 @@ class Bsimplex {
 
    //******** SIMPLEX DATA ********
 
-   SimplexData* find_data(uint key) const {
+   SimplexData* find_data(simplex_id_t key) const {
       return _data_list ? _data_list->get_item(key) : 0;
    }
 
-   SimplexData* find_data(Cstr_ptr& s) const { return find_data((uint)**s);}
-   SimplexData* find_data(void *key)   const { return find_data((uint)key);}
+   SimplexData* find_data(Cstr_ptr& s) const { return find_data((simplex_id_t)**s);}
+   SimplexData* find_data(void *key)   const { return find_data((simplex_id_t)key);}
    
    void add_simplex_data(SimplexData* sd);
    void rem_simplex_data(SimplexData* sd) {

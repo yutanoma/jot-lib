@@ -32,6 +32,8 @@ FINALCFLAGS   := $(FINALCFLAGS) -x c
 endif
 ifeq ($(ARCH),macosx)
 FINALCFLAGS   := $(FINALCFLAGS) -x c
+# These are C sources: drop the C++ -std flag.
+JOT_CXXSTD    :=
 endif
 
 include $(JOT_ROOT)/include/makefiles/std

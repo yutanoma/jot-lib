@@ -134,7 +134,8 @@ namespace Color {
 
    // Convert a color to a string, e.g. "0.25 0.7 0.15":
    inline str_ptr color_to_str(CCOLOR& col) {
-      return str_ptr(col[0]) + " " + col[1] + " " + col[2];
+      return str_ptr(col[0]) + str_ptr(" ") + str_ptr(col[1]) +
+             str_ptr(" ") + str_ptr(col[2]);
    }
 
    // Given a Config variable name and a default COLOR value,

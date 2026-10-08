@@ -3928,9 +3928,10 @@ LuboPath::get_faces(TAGformat &d)
    *d >> num;
 
    for (int i=0; i<num; i++) {
-      int face_pointer;
-      *d >> face_pointer;
-      _simplexes.add((Bsimplex*)face_pointer);
+      // See put_faces(): what is stored is a Bsimplex key, not an address.
+      int simplex_key;
+      *d >> simplex_key;
+      _simplexes.add(Bsimplex::lookup((uint)simplex_key));
    }
 
 }
@@ -3946,7 +3947,10 @@ LuboPath::put_faces(TAGformat &d) const
    d.id();
    *d << _simplexes.num();
    for (int i=0; i<_simplexes.num(); i++) {
-      *d << (int)_simplexes[i];
+      // Store the simplex's stable key rather than its address: a pointer
+      // does not fit in an int on 64-bit, and an address is meaningless
+      // once reloaded. Key 0 denotes a null simplex (see Bsimplex::lookup).
+      *d << (int)(_simplexes[i] ? _simplexes[i]->key() : 0);
    }
    d.end_id();
 

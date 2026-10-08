@@ -21,7 +21,7 @@
 #include "bsimplex.H"
 
 void
-SimplexData::set(uint id, Bsimplex* s)
+SimplexData::set(simplex_id_t id, Bsimplex* s)
 {
    // If we're switching simplices, get out of the old one:
    if (_simplex)

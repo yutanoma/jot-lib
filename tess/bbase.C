@@ -85,7 +85,7 @@ Bbase::is_last() const
 uint 
 Bbase::key() 
 {
-   static uint k = (uint) **static_name();
+   static simplex_id_t k = (simplex_id_t) **static_name();
    return k;
 }
 
@@ -444,7 +444,7 @@ Bbase::find_meme(CBsimplex* s) const
 
    // So we're not in control of this simplex, but might still
    // have an inactive meme on it. Search using key == this:
-   return (Meme*)s->find_data((uint)this);
+   return (Meme*)s->find_data((simplex_id_t)this);
 }
 
 VertMemeList 

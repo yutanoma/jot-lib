@@ -29,7 +29,7 @@
 void 
 PatchIDStripCB::faceCB(CBvert* v, CBface* f)
 {
-   uint rgba = IDRefImage::key_to_rgba(uint(f->patch()));
+   uint rgba = IDRefImage::key_to_rgba(f->patch()->key());
    glColor4ubv((GLubyte*)&rgba);
 
    glVertex3dv(v->loc().data());

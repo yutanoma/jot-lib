@@ -25,7 +25,7 @@
 #include <cassert>
 #include "support.H"
 
-ThreadMutex mutex;
+static ThreadMutex hash_mutex;   // renamed: avoids clash with std::mutex
 
 static const int RIGHT_BITS_TO_DROP = 3;
 
@@ -118,7 +118,7 @@ HASH::~HASH()
 int
 HASH::add(long key, void *data)
 {
-   CriticalSection cs(&mutex);
+   CriticalSection cs(&hash_mutex);
    assert(table());
    hash_node *e, *new_node, *prev, **list = &table()[hash(key)];
 
@@ -178,7 +178,7 @@ HASH::del(long key)
 void **
 HASH::find_addr(long key) const
 {
-   CriticalSection cs(&mutex);
+   CriticalSection cs(&hash_mutex);
    hash_node **list, *e;
 
    list = &table()[hash(key)];
@@ -236,7 +236,7 @@ HASH::bfind(long key, void *&data) const
 int
 HASH::add(const char *key, void *data, char *&loc, int create_new)
 {
-   CriticalSection cs(&mutex);
+   CriticalSection cs(&hash_mutex);
    assert(table());
    hash_node *e, *prev, **list = &table()[hash(key)];
 
@@ -269,7 +269,7 @@ HASH::add(const char *key, void *data, char *&loc, int create_new)
 void  *
 HASH::find(char *key) const
 {
-   CriticalSection cs(&mutex);
+   CriticalSection cs(&hash_mutex);
    assert(table());
    hash_node *e, **list = &table()[hash(key)];
 

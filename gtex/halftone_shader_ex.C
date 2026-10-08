@@ -19,6 +19,7 @@
  * haltone_shader_ex.C
  *************************************************************************/
 #include <map>
+#include <stdint.h>
 
 #include "halftone_shader_ex.H"
 #include "gtex/gl_extensions.H"
@@ -179,7 +180,7 @@ class StripTexCoordsCB2 : public GLStripCB {
 		   gradient.U_grad[2] = derivative[0]; 
 		   gradient.V_grad[2] = derivative[1]; 
          
-         face_gradient_map[int(faces[i])]= gradient; //uses the face pointer as a key
+         face_gradient_map[uintptr_t(faces[i])]= gradient; //uses the face pointer as a key
 
       }
 
@@ -214,7 +215,7 @@ class StripTexCoordsCB2 : public GLStripCB {
 	   {
          //getting the previously computed face gradients
 
-         UV_grad grad = face_gradient_map[int(faces[i])];
+         UV_grad grad = face_gradient_map[uintptr_t(faces[i])];
          
          U_vec = grad.U_grad;
          V_vec = grad.V_grad;
@@ -253,7 +254,8 @@ protected :
 	GLint	 dU_loc;
 	GLint	 dV_loc;
 
-   map<int,UV_grad> face_gradient_map;
+   // Keyed on the face pointer, so the key must be pointer-sized.
+   map<uintptr_t,UV_grad> face_gradient_map;
    bool valid_gradients;
 
 };

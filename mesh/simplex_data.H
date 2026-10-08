@@ -21,12 +21,17 @@
 #ifndef SIMPLEX_DATA_H_IS_INCLUDED
 #define SIMPLEX_DATA_H_IS_INCLUDED
 
+#include <stdint.h>
+
 #include "net/rtti.H"
 #include "mlib/points.H"
 
 using namespace mlib;
 
 typedef unsigned int   uint;
+// Owner IDs below are really pointer values (a "this" pointer, or an
+// interned str_ptr), so they must be pointer-sized: uint truncates on 64-bit.
+typedef uintptr_t      simplex_id_t;
 typedef unsigned short ushort;
 typedef unsigned char  uchar;
 
@@ -44,10 +49,10 @@ class SimplexData {
    //******** MANAGERS ********
 
    // Store the data on the simplex with a given "owner ID":
-   void set(uint id, Bsimplex* s);
-   void set(Cstr_ptr& str, Bsimplex* s) { set((uint)**str, s); }
+   void set(simplex_id_t id, Bsimplex* s);
+   void set(Cstr_ptr& str, Bsimplex* s) { set((simplex_id_t)**str, s); }
 
-   SimplexData(uint key, Bsimplex* s)     : _id(0), _simplex(0) { set(key, s);}
+   SimplexData(simplex_id_t key, Bsimplex* s) : _id(0), _simplex(0) { set(key, s);}
    SimplexData(Cstr_ptr& str, Bsimplex* s): _id(0), _simplex(0) { set(str, s);}
   
    virtual ~SimplexData();
@@ -56,7 +61,7 @@ class SimplexData {
    DEFINE_RTTI_METHODS_BASE("SimplexData", CSimplexData*);
 
    //******** ACCESSORS ********
-   uint       id()                      const   { return _id; }
+   simplex_id_t id()                    const   { return _id; }
    Bsimplex*  simplex()                 const   { return _simplex; }
 
    //******** VIRTUAL METHODS ********
@@ -106,7 +111,7 @@ class SimplexData {
 
  //*****************************************************************
  protected:
-   uint      _id;       // unique ID of the owner of this data
+   simplex_id_t _id;    // unique ID of the owner of this data
    Bsimplex* _simplex;  // the simplex this is attached to.
 };
 
@@ -124,7 +129,7 @@ class SimplexDataList : public ARRAY<SimplexData*> {
    ~SimplexDataList();
 
    //******** LOOKUP ********
-   SimplexData* get_item(uint key) const {
+   SimplexData* get_item(simplex_id_t key) const {
       for (int k=0; k<_num; k++)
          if (_array[k]->id() == key)
             return _array[k];

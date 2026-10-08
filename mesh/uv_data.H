@@ -268,8 +268,8 @@ class UVdata : public SimplexData {
    UVMapping*   _mapping;       // XXX - need a comment here...
 
    // The unique ID used to lookup UVdata:
-   static uint key() {
-      uint ret = (uint)**static_name();
+   static simplex_id_t key() {
+      simplex_id_t ret = (simplex_id_t)**static_name();
       return ret;
    }
 

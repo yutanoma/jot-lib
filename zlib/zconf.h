@@ -210,7 +210,10 @@
 #   define FAR
 #endif
 
-#if !defined(MACOS) && !defined(TARGET_OS_MAC)
+/* Classic MacOS got Byte from <MacTypes.h>. Modern macOS defines
+ * TARGET_OS_MAC without pulling MacTypes.h in, which left Byte undefined;
+ * key off __MACTYPES__ instead, as upstream zlib 1.2 does. */
+#ifndef __MACTYPES__
 typedef unsigned char  Byte;  /* 8 bits */
 #endif
 typedef unsigned int   uInt;  /* 16 bits or more */

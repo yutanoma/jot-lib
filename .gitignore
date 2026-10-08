@@ -1,0 +1,42 @@
+# Build artifacts for jot-lib.
+#
+# This mirrors the build-related entries of .cvsignore. It deliberately does
+# NOT ignore the model/config files that .cvsignore lists (*.jot, jot.cfg,
+# *.sm): unlike the old CVS tree, this repository tracks paperdoll.jot,
+# jot.cfg and jot-default.cfg.
+
+# Compiler output. COMP_DIR_BASE defaults to $(JOT_ROOT)/lib, so every object
+# file, static library and executable lands under lib/<arch>/<mode>/.
+/lib/
+*.o
+*.obj
+*.a
+*.lib
+*.dep
+
+# Local build configuration -- your own copy of doc/Makefile.local and
+# doc/setup.bat, per doc/start-here.txt. The templates in doc/ stay tracked.
+/Makefile.local
+/setup.bat
+
+# Generated documentation (Doxyfile: OUTPUT_DIRECTORY = ./doxygen_docs)
+/doxygen_docs/
+
+# Visual Studio per-user and intermediate files
+Debug/
+*.ncb
+*.opt
+*.plg
+*.suo
+*.user
+*.exp
+*.ilk
+*.pdb
+
+# Run-time output: cached silhouette data and screen grabs
+*.sil
+big_grab*.png
+
+# Editor and OS cruft
+*~
+.DS_Store

@@ -1,0 +1,57 @@
+Building jot on modern macOS (Apple Silicon)
+============================================
+
+Verified on macOS 27 / arm64 with Apple clang 21 and GNU make 3.81,
+against the system GLUT.framework and OpenGL.framework. Both binaries
+are native 64-bit arm64; no Rosetta and no X11 are involved.
+
+NOTE: OpenGL and GLUT are deprecated by Apple but still present. jot
+uses the legacy compatibility profile (reported at run time as
+"GL Version: 2.1 Metal").
+
+-----------------------------------------------------------------
+1. Configuration
+
+Makefile.local in the jot root holds the macosx settings. It picks up
+JOT_ROOT from the environment and falls back to a hardcoded path, so
+edit that fallback if you move the tree.
+
+-----------------------------------------------------------------
+2. Environment
+
+  export JOT_ROOT=<path to this directory>
+  export ARCH=macosx
+
+Optional:
+
+  export JOT_WINDOW_WIDTH=1024
+  export JOT_WINDOW_HEIGHT=768
+  export NO_SPLASH=true
+
+-----------------------------------------------------------------
+3. Compile
+
+  make jot                # debug    -> lib/macosx/D/jot
+  make smview             # debug    -> lib/macosx/D/smview
+  make jot M=O            # optimized -> lib/macosx/O/jot
+  make jot JOBS=8         # parallel
+
+`make depend` is a no-op here: makedepend no longer ships with macOS,
+so Makefile.local sets MKDEP to `true` and the dependency files are
+written empty. Builds work, but editing a header will not automatically
+rebuild its dependents -- use `make clean-jot` after header changes.
+
+-----------------------------------------------------------------
+4. Running
+
+jot reads jot.cfg from the jot root, so run it from there:
+
+  ./lib/macosx/D/jot paperdoll.jot
+
+paperdoll.jot is saved in the "actions" file format, which is only
+read when SAVE_ACTIONS is on:
+
+  SAVE_ACTIONS=true ./lib/macosx/D/jot paperdoll.jot
+
+Without it the TEXBODY "script" tag is not registered, the tag is
+skipped, and the model's construction history is not restored.

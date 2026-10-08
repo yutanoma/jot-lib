@@ -274,9 +274,15 @@
  * just __MWERKS__ is not good enough, because the Codewarrior is now used
  * on non-Mac platforms.
  */
+/* NOTE: TARGET_OS_MAC used to mean "classic Mac OS", but on modern macOS it
+ * is defined for every Apple platform. Keying on it here sent Darwin down the
+ * classic-Mac path (no <sys/types.h>, and <fp.h> instead of <math.h>), which
+ * no longer exists. Darwin is a Unix: let it take the default branch.
+ */
 #ifndef MACOS
 #  if (defined(__MWERKS__) && defined(macintosh)) || defined(applec) || \
-      defined(THINK_C) || defined(__SC__) || defined(TARGET_OS_MAC)
+      defined(THINK_C) || defined(__SC__) || \
+      (defined(TARGET_OS_MAC) && !defined(__APPLE__))
 #    define MACOS
 #  endif
 #endif

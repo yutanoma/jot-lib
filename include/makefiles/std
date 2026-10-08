@@ -157,8 +157,8 @@ endif
 #
 PLATCFLAGS = -fPIC
 PLATDFLAGS = 
-PLATIFLAGS = -I$(JOT_ROOT)/include/macosx -I/usr/X11R6/include -I/usr/include -Dmacosx
-PLATLFLAGS = -L$(COMP_DIR_ROOT) $(FRAMEWORKS) -Dmacosx
+PLATIFLAGS = -I$(JOT_ROOT)/include/macosx -I/usr/X11R6/include -Dmacosx=macosx
+PLATLFLAGS = -L$(COMP_DIR_ROOT) $(FRAMEWORKS)
 
 
 ifeq ($(JOT_BUILD_MULTITHREAD),yes)

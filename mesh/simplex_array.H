@@ -41,7 +41,7 @@ class SimplexArray : public ARRAY<T> {
 
    SimplexArray(const ARRAY<T>& list)  : ARRAY<T>(list) {}
    explicit SimplexArray(int n=0)      : ARRAY<T>(n)    {}
-   explicit SimplexArray(T s)          : ARRAY<T>()     { add(s); }
+   explicit SimplexArray(T s)          : ARRAY<T>()     { this->add(s); }
 
    virtual ~SimplexArray() {
       if (_do_index)
@@ -314,7 +314,7 @@ class SimplexArray : public ARRAY<T> {
 
       //******** MANAGERS ********
 
-      IndexData(uint key, Bsimplex* s) :
+      IndexData(simplex_id_t key, Bsimplex* s) :
          SimplexData(key, s), _index(-1) {}
 
       //******** ACCESSORS ********
@@ -330,13 +330,13 @@ class SimplexArray : public ARRAY<T> {
 
    // On the given simplex, find the data owned by this list:
    IndexData* lookup_data(const T& s) const {
-      return s ? (IndexData*)s->find_data((uint)this) : 0;
+      return s ? (IndexData*)s->find_data((simplex_id_t)this) : 0;
    }
 
    // Similar to lookup_data() but creates the data if needed
    IndexData* put_data(const T& s) const {
       IndexData* ret = lookup_data(s);
-      return ret ? ret : new IndexData((uint)this, (T)s);
+      return ret ? ret : new IndexData((simplex_id_t)this, (T)s);
    }
 
    //******** ARRAY VIRTUAL METHODS ********

@@ -45,7 +45,7 @@ class SkelFrame : public VertFrame {
 
    //******** MANAGERS ********
 
-   SkelFrame(uint key,
+   SkelFrame(simplex_id_t key,
              Bvert* v,
              CWvec& n,
              Bedge* prev=0,
@@ -59,7 +59,7 @@ class SkelFrame : public VertFrame {
       _dirty = 1;
    }
 
-   SkelFrame(uint key,
+   SkelFrame(simplex_id_t key,
              Bvert* v,
              CWvec& t,
              CWvec& n,
@@ -99,7 +99,7 @@ class SkelFrame : public VertFrame {
    }
 
    // Prevents warnings:
-   void set(uint id, Bsimplex* s)       { SimplexData::set(id, s); }
+   void set(simplex_id_t id, Bsimplex* s) { SimplexData::set(id, s); }
    void set(Cstr_ptr& str, Bsimplex* s) { SimplexData::set(str, s); }
 
    //******** SimplexData NOTIFICATION METHODS ********
