@@ -34,12 +34,84 @@ Only numpy is required.
 
 | flag | what it does |
 |---|---|
-| `--period-pix N` | pixels per unit of stroke parameter: the stylization period. Default 30. |
-| `--style dash\|plain\|phase` | `dash` is a dash pattern in *parameter* space (the thing that demonstrates coherence); `plain` draws the bare contour; `phase` tints by fractional parameter. |
-| `--canvas N` | render every frame on a fixed N×N canvas. The exporter crops each frame differently (70 distinct sizes over the bunny sequence), so without this the SVGs vary in size. Default 0 mirrors each frame's own crop, which overlays the exporter's own SVGs exactly. |
+| `--style` | which mark to lay down: see **Brushes** below. |
+| `--period-pix N` | pixels per unit of stroke parameter: the stylization period. 30 by default for vector brushes; textures derive their own. |
+| `--canvas N` | render every frame on a fixed N×N canvas. The exporter crops each frame differently (70 distinct sizes over the bunny sequence), so without this the output varies in size. Default 0 mirrors each frame's own crop, which overlays the exporter's own SVGs exactly. Required for textured brushes. |
 | `--fit`, `--cover` | jot's fit and coverage policies. Defaults match jot: `optimize` / `hybrid`. |
 | `--report` | per-frame propagation stats plus the swimming measure described below. |
 | `--incoherent` | drop propagation entirely, for comparison. |
+
+## Brushes
+
+A brush is anything expressed as a function of the coherent parameter `t`.
+That is the entire contract: section 5 hands back (t, position) pairs whose
+`t` is stable between frames, so a mark driven by `t` stays pinned to the
+surface. A mark driven by screen arclength instead — SVG's own
+`stroke-dasharray`, for one — swims, which is the artifact the paper exists
+to fix.
+
+`--list-brushes` prints every preset and texture available.
+
+### Vector brushes (write SVG)
+
+| `--style` | mark |
+|---|---|
+| `plain` | the bare contour, constant width |
+| `dash` | on/off in parameter space — the default |
+| `stipple` | one dot per period |
+| `ribbon` | filled outline whose width follows `--press` and `--taper` |
+| `phase` | every segment tinted by fractional `t`; a coherence debug view |
+
+Modifiers, usable with any of them:
+
+    --width PX            brush width
+    --color '#000000'     --opacity 0..1
+    --duty 0.6            inked fraction of each period (dash, stipple)
+    --press flat|swell|pencil|blob     width profile within a period
+    --taper PX            narrowing at each stroke end (ribbon)
+    --wiggle PX           lateral wobble, one per period
+    --wiggle-profile hand|sine
+
+`--wiggle` is jot's own brush model in miniature: a `BaseStrokeOffsetLIST`
+(`stroke/base_stroke.H:113`) is a recorded gesture stored as lateral
+displacement against position within the pattern, rubber-stamped every
+`_pix_len` pixels. Our period is that `_pix_len`, so `frac(t)` is position
+within one stamp.
+
+    python3 stylize.py <dir> --canvas 840 --style ribbon --width 8 \
+        --press pencil --wiggle 3 --taper 60
+
+### Textured brushes (write PNG)
+
+jot ships 114 brush textures in `nprdata/stroke_textures` and 29 presets in
+`nprdata/stroke_presets`. A texture is a pure alpha mask, W samples along one
+period of `t` by H across the stroke; the colour comes from the preset, not
+the texture. These stamp along the stroke with `u = frac(t)`, so they are
+coherent for the same reason the dashes are.
+
+    python3 stylize.py <dir> --canvas 840 --preset pencil --width 16
+    python3 stylize.py <dir> --canvas 840 --style texture \
+        --texture 2D--dot-dash-64 --width 14
+
+`--preset` supplies colour, alpha, width, taper and texture, and implies
+`--style texture`; any explicit flag overrides it. The period defaults to
+`width * (W/H)` so the stamp is not squashed, clamped to [8, 240] px; a
+1-column texture is a pure cross-section with no structure along the stroke,
+so it just takes the 30 px default. `--ss` controls supersampling (2 by
+default).
+
+SVG cannot warp a bitmap along a curve without an unreasonable number of
+elements, which is why these raster. Expect about 0.5 s/frame.
+
+### Adding your own
+
+Everything funnels through two places. For a vector mark, add a branch in
+`svgout.write_svg` and a profile in `brushes.py` — profiles are plain
+functions of `u = frac(t)` and must agree at `u = 0` and `u = 1` or the
+stroke kinks at each period boundary. For a textured one, drop a grayscale +
+alpha PNG anywhere and pass its path to `--texture`. If you want to drive
+something else entirely, `--json` writes the raw (t, position) samples per
+stroke and you can render them however you like.
 
 ## Checking that it works
 

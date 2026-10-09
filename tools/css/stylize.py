@@ -17,22 +17,28 @@ parallelize them.
 import argparse
 import json
 import os
+import statistics
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import brushes                                          # noqa: E402
 from css import COVER_NAMES, FIT_NAMES, Params          # noqa: E402
 from export_io import find_frames, load_frame           # noqa: E402
 from stylizer import Stylizer                           # noqa: E402
-from svgout import write_svg                            # noqa: E402
+from svgout import (PRESS_PROFILES, STYLES, WIGGLE_PROFILES, Brush,  # noqa: E402
+                    strokes_to_pixels, write_svg)
+
+DEFAULT_TEXTURE = "2D--gauss-med-32"
 
 
 def build_args():
     p = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("root", help="frame directory, or a directory of them")
+    p.add_argument("root", nargs="?", help="frame directory, or a directory "
+                                           "of them")
     p.add_argument("--out", help="output directory "
                                  "(default: <root>_css next to the input)")
     p.add_argument("--start", type=int, default=0, help="first frame index")
@@ -57,33 +63,54 @@ def build_args():
     g.add_argument("--sample-step", type=int, default=4,
                    help="LUBO_SAMPLE_STEP: sample spacing multiplier")
     g.add_argument("--one-sided", action="store_true",
-                   help="search only along +normal, as jot does.  Default is "
-                        "to try both, since an external normal's outward sign "
-                        "is not guaranteed to match jot's")
+                   help="search only along +normal, as jot does")
     g.add_argument("--vote-from-hidden", action="store_true",
-                   help="let samples that were hidden last frame vote too.  "
-                        "jot does not: it matches sample visibility to path "
-                        "visibility")
+                   help="let samples hidden last frame vote too; jot does not")
     g.add_argument("--incoherent", action="store_true",
                    help="drop propagation entirely: each frame parameterized "
                         "from scratch.  Use this to see what CSS is fixing")
 
-    g = p.add_argument_group("stylization")
-    g.add_argument("--period-pix", type=float, default=30.0,
-                   help="pixels per unit of stroke parameter t")
-    g.add_argument("--style", choices=["dash", "plain", "phase"],
-                   default="dash")
+    g = p.add_argument_group("brush")
+    g.add_argument("--style", choices=STYLES + ["texture"], default="dash",
+                   help="mark to lay down along the stroke.  'texture' stamps "
+                        "a jot stroke texture and writes PNG; the rest are "
+                        "vector and write SVG")
+    g.add_argument("--preset", help="jot stroke preset (name or path to a "
+                                    ".pre); supplies colour, alpha, width, "
+                                    "taper and texture.  Implies --style "
+                                    "texture unless you say otherwise")
+    g.add_argument("--texture", help="jot stroke texture, name or path "
+                                     "(default: %s)" % DEFAULT_TEXTURE)
+    g.add_argument("--period-pix", type=float,
+                   help="pixels per unit of stroke parameter t: the "
+                        "stylization period.  Default 30 for vector brushes; "
+                        "for a texture it defaults to width * (W/H) of the "
+                        "texture, so the stamp is not squashed")
     g.add_argument("--duty", type=float, default=0.6,
-                   help="fraction of each period that is inked (dash style)")
-    g.add_argument("--width", type=float, default=2.0, help="stroke width, px")
-    g.add_argument("--color", default="#000000")
+                   help="inked fraction of each period (dash, stipple)")
+    g.add_argument("--width", type=float, help="brush width in pixels")
+    g.add_argument("--color", help="e.g. #000000")
+    g.add_argument("--opacity", type=float, help="0..1")
+    g.add_argument("--taper", type=float,
+                   help="pixels over which the brush narrows at each stroke "
+                        "end (ribbon and texture)")
+    g.add_argument("--press", choices=sorted(PRESS_PROFILES), default="flat",
+                   help="width profile within each period (ribbon, texture)")
+    g.add_argument("--wiggle", type=float, default=0.0,
+                   help="lateral displacement amplitude in pixels, one "
+                        "wobble per period -- jot's BaseStrokeOffset model")
+    g.add_argument("--wiggle-profile", choices=sorted(WIGGLE_PROFILES),
+                   default="hand")
     g.add_argument("--background", help="e.g. #ffffff; default transparent")
     g.add_argument("--canvas", type=int, default=0, metavar="N",
                    help="render every frame on a fixed N x N canvas covering "
                         "the whole NDC square.  Default 0 mirrors each "
-                        "frame's own crop, which overlays the exporter's own "
-                        "SVGs but varies in size between frames")
+                        "frame's own crop")
+    g.add_argument("--ss", type=int, default=2,
+                   help="supersampling for textured brushes")
 
+    p.add_argument("--list-brushes", action="store_true",
+                   help="list available jot presets and textures, then exit")
     p.add_argument("--report", action="store_true",
                    help="print propagation and swimming diagnostics")
     p.add_argument("--json", action="store_true",
@@ -93,10 +120,56 @@ def build_args():
     return p
 
 
+def _hex_to_rgb(s):
+    s = s.lstrip("#")
+    return tuple(int(s[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+
+
+def resolve_brush(args):
+    """Merge the preset (if any) with the explicit flags; flags win."""
+    pre = brushes.Preset.load(args.preset) if args.preset else None
+
+    style = args.style
+    if pre is not None and pre.texture and "--style" not in sys.argv:
+        style = "texture"
+
+    width = args.width
+    if width is None:
+        width = pre.width if pre else (2.0 if style != "texture" else 6.0)
+
+    color = args.color or (pre.hexcolor() if pre else "#000000")
+    opacity = args.opacity
+    if opacity is None:
+        opacity = pre.alpha if pre else 1.0
+    taper = args.taper
+    if taper is None:
+        taper = pre.taper if pre else 0.0
+
+    texture = args.texture or (pre.texture if pre else None) or DEFAULT_TEXTURE
+
+    brush = Brush(style=style, width=width, color=color, duty=args.duty,
+                  wiggle=args.wiggle, wiggle_profile=args.wiggle_profile,
+                  taper=taper, press_profile=args.press, opacity=opacity)
+    return brush, texture, pre
+
+
 def main(argv=None):
     args = build_args().parse_args(argv)
 
+    if args.list_brushes:
+        print("presets (nprdata/stroke_presets) -- use with --preset:")
+        for n in brushes.list_presets():
+            print("   ", n)
+        print("\ntextures (nprdata/stroke_textures) -- use with --texture:")
+        for n in brushes.list_textures():
+            print("   ", n)
+        return
+    if not args.root:
+        build_args().error("the following arguments are required: root")
+
     root = os.path.abspath(args.root)
+    if not os.path.isdir(root):
+        sys.exit("no such directory: %s" % root)
     frames = find_frames(root)
     if not frames:
         sys.exit("no frame directories with contour_export_3d_camera.json "
@@ -105,6 +178,34 @@ def main(argv=None):
 
     out_dir = args.out or (root.rstrip(os.sep) + "_css")
     os.makedirs(out_dir, exist_ok=True)
+
+    try:
+        brush, texture_name, preset = resolve_brush(args)
+    except FileNotFoundError as e:
+        sys.exit("%s\n(run --list-brushes to see what is available)" % e)
+
+    tex = None
+    period = args.period_pix
+    if brush.style == "texture":
+        import raster
+        try:
+            tex = brushes.load_texture(texture_name)
+        except FileNotFoundError as e:
+            sys.exit("%s\n(run --list-brushes to see what is available)" % e)
+        if not args.canvas:
+            sys.exit("--style texture needs a fixed canvas; pass --canvas 840")
+        if period is None:
+            # One stamp per period, at the texture's own aspect ratio, so the
+            # mark is not squashed.  A 1-column texture is a pure
+            # cross-section with no structure along the stroke, so its period
+            # is arbitrary; extreme aspects are clamped to something a stroke
+            # can actually fit.
+            across, along = tex.shape
+            period = (30.0 if along <= 1
+                      else min(max(brush.width * along / float(across),
+                                   8.0), 240.0))
+    if period is None:
+        period = 30.0
 
     params = Params(
         fit_type=FIT_NAMES[args.fit],
@@ -118,15 +219,20 @@ def main(argv=None):
         lubo_sample_step=args.sample_step,
         search_both=not args.one_sided,
         vote_requires_visible=not args.vote_from_hidden,
-        offset_pix_len=args.period_pix,
+        offset_pix_len=period,
         seed=args.seed,
     )
 
+    if not args.quiet:
+        print("brush: %s  width %.1f  period %.0fpx%s%s"
+              % (brush.style, brush.width, period,
+                 "  texture " + texture_name if tex is not None else "",
+                 "  preset " + preset.name if preset else ""))
+
     sty = Stylizer(params)
     t0 = time.time()
-    sizes = set()
     totals = {"votes": 0, "strokes": 0, "groups": 0}
-    resid = []
+    resid, sizes = [], set()
 
     for i, d in enumerate(frames):
         name = os.path.basename(d.rstrip(os.sep)) or "frame"
@@ -137,10 +243,22 @@ def main(argv=None):
 
         res = sty.run_frame(frame)
 
-        write_svg(os.path.join(out_dir, name + ".svg"), res.strokes,
-                  frame.cam, style=args.style, duty=args.duty,
-                  width=args.width, color=args.color,
-                  background=args.background, canvas=args.canvas)
+        if tex is not None:
+            import raster
+            cov = raster.render(
+                strokes_to_pixels(res.strokes, frame.cam, args.canvas),
+                args.canvas, tex, width=brush.width, taper_px=brush.taper,
+                wiggle_px=brush.wiggle, wiggle_profile=brush.wiggle_profile,
+                press_profile=brush.press_profile, ss=args.ss)
+            raster.write_png(
+                os.path.join(out_dir, name + ".png"), cov,
+                color=_hex_to_rgb(brush.color), alpha=brush.opacity,
+                background=_hex_to_rgb(args.background) if args.background
+                else None)
+        else:
+            write_svg(os.path.join(out_dir, name + ".svg"), res.strokes,
+                      frame.cam, brush, background=args.background,
+                      canvas=args.canvas)
 
         if args.json:
             data = [{"path": s.path_index, "group": s.group_id,
@@ -156,6 +274,7 @@ def main(argv=None):
             totals[k] += res.stats[k]
         if res.stats.get("resid_n"):
             resid.append(res.stats["resid_mean_px"])
+
         if not args.quiet:
             s = res.stats
             line = ("[%3d/%3d] %-8s paths %-3d samples %-5d votes %-5d "
@@ -182,9 +301,8 @@ def main(argv=None):
               "for a fixed canvas if you are making an animation."
               % len(sizes))
     if resid:
-        import statistics
         print("mean swimming across frames: %.3f px of a %.0f px period"
-              % (statistics.mean(resid), args.period_pix))
+              % (statistics.mean(resid), period))
 
 
 if __name__ == "__main__":
