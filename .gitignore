@@ -40,3 +40,6 @@ big_grab*.png
 # Editor and OS cruft
 *~
 .DS_Store
+
+# pycache
+*/__pycache__/
