@@ -22,13 +22,14 @@ OFFSETS = [(0, 0), (-1, -1), (0, -1), (1, -1), (-1, 0),
 
 
 class Stroke:
-    __slots__ = ("path_index", "group_id", "t", "ndc")
+    __slots__ = ("path_index", "group_id", "t", "ndc", "k")
 
-    def __init__(self, path_index, group_id, t, ndc):
+    def __init__(self, path_index, group_id, t, ndc, k=None):
         self.path_index = path_index
         self.group_id = group_id
         self.t = t          # list of stroke-space parameters
         self.ndc = ndc      # list of (x, y) NDC positions, same length
+        self.k = k          # |radial curvature| per sample, or None
 
 
 class FrameResult:
@@ -286,7 +287,9 @@ class Stylizer:
             pts.append(p.at_s(s))
         if num == 2 and np.linalg.norm(pts[1] - pts[0]) < 1e-12:
             return None
-        return Stroke(p.index, g.base_id, ts, pts)
+        ss = sbegin + np.arange(num) * sd
+        k = None if p.kappa is None else p.kappa_at_s(ss)
+        return Stroke(p.index, g.base_id, ts, pts, k)
 
 
 def _visible_spans(p):

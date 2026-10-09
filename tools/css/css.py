@@ -216,6 +216,8 @@ class Path:
         self.wnrm = chain.wnrm
         self.edge_vis = chain.edge_vis
         self.closed = chain.closed
+        # Per-node radial curvature, or None when the frame did not carry it.
+        self.kappa = getattr(chain, "kappa", None)
 
         self.ndc = cam.ndc(chain.wpts)
         self.depth = cam.depth(chain.wpts)
@@ -268,6 +270,20 @@ class Path:
         nv = self.wnrm[i] * (1.0 - w) + self.wnrm[i + 1] * w
         ln = np.linalg.norm(nv)
         return p, (nv / ln if ln > 1e-12 else self.wnrm[i])
+
+    def kappa_at_s(self, s):
+        """|radial curvature| at NDC arclengths `s` (array in, array out).
+
+        NaN -- a node whose curvature could not be evaluated -- propagates,
+        and the brush reads it as "no opinion" rather than as a cusp.
+        """
+        s = np.asarray(s, dtype=float)
+        if self.kappa is None:
+            return np.full(s.shape, np.nan)
+        if self.length <= 0.0:
+            return np.full(s.shape, abs(self.kappa[0]))
+        return np.interp(np.clip(s, 0.0, self.length), self.s,
+                         np.abs(self.kappa))
 
     # ------------------------------------------------- front-facing segments
 

@@ -42,4 +42,4 @@ big_grab*.png
 .DS_Store
 
 # pycache
-*/__pycache__/
+**/__pycache__/

@@ -15,7 +15,8 @@ elements, so textured brushes raster directly.
 
 import numpy as np
 
-from brushes import PRESS_PROFILES, WIGGLE_PROFILES, end_taper, polyline_frame
+from brushes import (PRESS_PROFILES, WIGGLE_PROFILES, Envelope,
+                     end_taper, polyline_frame)
 
 
 def _sample(tex, u, v):
@@ -81,15 +82,17 @@ def _tri(cov, tex, p, attr):
 
 
 def render(strokes_px, size, tex, width=6.0, taper_px=0.0, wiggle_px=0.0,
-           wiggle_profile="hand", press_profile="flat", ss=2):
+           wiggle_profile="hand", press_profile="flat", ss=2, envelope=None):
     """Rasterize a frame.  `strokes_px` is a list of (t array, Nx2 pixel
-    array).  Returns a float coverage image of shape (size, size)."""
+    array, |kappa_r| array or None).  Returns a float coverage image of shape
+    (size, size)."""
     n = int(size * ss)
     cov = np.zeros((n, n), dtype=np.float32)
     wig = WIGGLE_PROFILES[wiggle_profile]
     prs = PRESS_PROFILES[press_profile]
+    env = envelope if envelope is not None else Envelope("end", taper_px)
 
-    for ts, px in strokes_px:
+    for ts, px, kap in strokes_px:
         if len(px) < 2:
             continue
         ts = np.asarray(ts, dtype=float)
@@ -101,8 +104,9 @@ def render(strokes_px, size, tex, width=6.0, taper_px=0.0, wiggle_px=0.0,
 
         _, nrm, arc = polyline_frame(p)
         total = arc[-1]
-        half = 0.5 * width * ss * prs(ts % 1.0) * end_taper(arc, total,
-                                                            taper_px * ss)
+        # `arc` is in supersampled pixels, so the end taper's length has to
+        # be scaled to match; the curvature term is scale-free.
+        half = 0.5 * width * ss * prs(ts % 1.0) * env(arc, total, kap, ss)
         L = p + nrm * half[:, None]
         R = p - nrm * half[:, None]
 

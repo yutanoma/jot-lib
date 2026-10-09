@@ -28,6 +28,7 @@ jot stroke textures
 import math
 import os
 import re
+import sys
 
 import numpy as np
 
@@ -90,6 +91,64 @@ def end_taper(arc_px, total_px, taper_px):
     return np.minimum(a, b) ** 0.6
 
 
+def curv_envelope(kappa, ref, gamma=0.5, floor=0.0):
+    """Width envelope driven by |radial curvature| instead of by position.
+
+        w = floor + (1 - floor) * clamp(|kappa_r| / ref, 0, 1) ** gamma
+
+    `ref` is the curvature at which the stroke reaches full width.  It MUST be
+    a constant for the whole sequence: normalizing per frame (by that frame's
+    own max, say) would make the width of a stationary point depend on what
+    else is on screen, which is the swimming this is meant to remove.
+
+    NaN -- curvature not evaluated at that node -- reads as full width, so an
+    incomplete curvature field degrades to the plain stroke rather than to a
+    hole.
+    """
+    k = np.asarray(kappa, dtype=float)
+    if ref <= 0.0:
+        return np.ones_like(k)
+    w = np.clip(np.abs(k) / ref, 0.0, 1.0) ** gamma
+    return floor + (1.0 - floor) * np.where(np.isfinite(w), w, 1.0)
+
+
+class Envelope:
+    """How a stroke's width varies along it.
+
+    mode "end"       jot's taper: distance from the stroke's own endpoints.
+    mode "curvature" |kappa_r|, a property of the surface point.
+    mode "both"      the product -- geometry decides, and the stroke still
+                     closes cleanly where it was cut by an occluder rather
+                     than by a cusp.
+    mode "none"      constant.
+    """
+
+    def __init__(self, mode="end", taper_px=0.0, ref=0.0, gamma=0.5,
+                 floor=0.0):
+        self.mode = mode
+        self.taper_px = taper_px
+        self.ref = ref
+        self.gamma = gamma
+        self.floor = floor
+
+    @property
+    def needs_curvature(self):
+        return self.mode in ("curvature", "both")
+
+    def __call__(self, arc, total, kappa=None, scale=1.0):
+        """`scale` converts taper_px into the units `arc` is measured in
+        (the raster renderer works in supersampled pixels)."""
+        arc = np.asarray(arc, dtype=float)
+        if self.mode == "none":
+            return np.ones_like(arc)
+        if self.mode == "end" or kappa is None:
+            return end_taper(arc, total, self.taper_px * scale)
+        c = curv_envelope(kappa, self.ref, self.gamma, self.floor)
+        if self.mode == "both":
+            return c * end_taper(arc, total, self.taper_px * scale)
+        return c
+
+
 # ----------------------------------------------------------- jot presets
 
 _NUM = r"[-+0-9.eE]+"
@@ -150,6 +209,31 @@ def list_textures():
     if not os.path.isdir(TEXTURE_DIR):
         return []
     return sorted(f[:-4] for f in os.listdir(TEXTURE_DIR) if f.endswith(".png"))
+
+
+# jot draws an untextured BaseStroke as a plain quad strip, so the stand-in
+# for "no texture" is a mask that is solid everywhere.
+SOLID = np.ones((1, 1), dtype=np.float32)
+
+
+def preset_texture(pre, warn=True):
+    """(mask, resolved name) for a preset, tolerating the two ways one can
+    lack a usable texture.
+
+    Some presets name no stroke texture at all (wash_blue), and one names a
+    file jot does not ship (balloon -> noisy1.png).  Both should still draw,
+    using their own colour, width and alpha over a solid mask, rather than
+    failing.  The returned name is None when the mask is that stand-in."""
+    if not pre.texture:
+        return SOLID.copy(), None
+    try:
+        return load_texture(pre.texture), pre.texture
+    except FileNotFoundError:
+        if warn:
+            sys.stderr.write(
+                "warning: preset %s names a texture jot does not ship (%s); "
+                "drawing it solid\n" % (pre.name, pre.texture))
+        return SOLID.copy(), None
 
 
 def load_texture(spec):

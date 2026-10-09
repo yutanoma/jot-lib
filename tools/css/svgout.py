@@ -15,7 +15,7 @@ import math
 
 import numpy as np
 
-from brushes import (PRESS_PROFILES, WIGGLE_PROFILES, end_taper,
+from brushes import (PRESS_PROFILES, WIGGLE_PROFILES, Envelope, end_taper,
                      polyline_frame)
 
 STYLES = ["plain", "dash", "stipple", "ribbon", "phase"]
@@ -34,6 +34,8 @@ class Brush:
         self.wiggle = wiggle
         self.wiggle_profile = wiggle_profile
         self.taper = taper
+        # Set by stylize.py; `end` reproduces the previous behaviour exactly.
+        self.envelope = Envelope("end", taper_px=taper)
         self.press_profile = press_profile
         self.opacity = opacity
 
@@ -120,9 +122,9 @@ def _poly(pts, color, width, opacity=1.0):
             'stroke-linejoin="round"%s/>\n' % (d, color, width, op))
 
 
-def _ribbon(ts, px, brush):
+def _ribbon(ts, px, brush, kappa=None):
     """A filled outline whose half-width follows a pressure profile and the
-    end taper -- a stroke with weight, rather than a constant hairline."""
+    width envelope -- a stroke with weight, rather than a constant hairline."""
     p = np.asarray(px, dtype=float)
     if len(p) < 2:
         return ""
@@ -130,7 +132,7 @@ def _ribbon(ts, px, brush):
     t = np.asarray(ts, dtype=float)
     half = (0.5 * brush.width
             * PRESS_PROFILES[brush.press_profile](t % 1.0)
-            * end_taper(arc, arc[-1], brush.taper))
+            * brush.envelope(arc, arc[-1], kappa))
     L = p + nrm * half[:, None]
     R = p - nrm * half[:, None]
     ring = list(L) + list(R[::-1])
@@ -139,12 +141,19 @@ def _ribbon(ts, px, brush):
     return '  <path d="%s" fill="%s" stroke="none"%s/>\n' % (d, brush.color, op)
 
 
-def _stipple(ts, px, brush):
-    """One dot per period, placed at the centre of the inked span."""
+def _stipple(ts, px, brush, kappa=None):
+    """One dot per period, placed at the centre of the inked span.  The
+    envelope scales each dot, so a curvature-driven run fades out in dot size
+    the way a ribbon fades in width."""
     out = []
-    r = 0.5 * brush.width
+    r0 = 0.5 * brush.width
+    # The envelope is per sample of the stroke, while the dots sit wherever a
+    # period lands, so each dot reads the value of the sample nearest to it.
+    samples = np.asarray(px, dtype=float)
+    env = (None if kappa is None
+           else brush.envelope(np.zeros(len(samples)), 1.0, kappa))
     op = "" if brush.opacity >= 1.0 else ' fill-opacity="%.3f"' % brush.opacity
-    for pts, _k in split_by_param(ts, px, brush.duty):
+    for pts, _period in split_by_param(ts, px, brush.duty):
         a = np.asarray(pts, dtype=float)
         seg = np.linalg.norm(np.diff(a, axis=0), axis=1)
         arc = np.concatenate([[0.0], np.cumsum(seg)])
@@ -154,6 +163,12 @@ def _stipple(ts, px, brush):
         i = min(max(i, 1), len(a) - 1)
         w = (0.5 * arc[-1] - arc[i - 1]) / max(seg[i - 1], 1e-9)
         c = a[i - 1] + (a[i] - a[i - 1]) * w
+        r = r0
+        if env is not None:
+            j = int(((samples - c) ** 2).sum(axis=1).argmin())
+            r = r0 * float(env[j])
+        if r <= 0.0:
+            continue
         out.append('  <circle cx="%.3f" cy="%.3f" r="%.3f" fill="%s"%s/>\n'
                    % (c[0], c[1], r, brush.color, op))
     return "".join(out)
@@ -187,9 +202,9 @@ def write_svg(path, strokes, cam, brush, background=None, canvas=0):
         if brush.style == "plain":
             out.append(_poly(px, brush.color, brush.width, brush.opacity))
         elif brush.style == "ribbon":
-            out.append(_ribbon(st.t, px, brush))
+            out.append(_ribbon(st.t, px, brush, st.k))
         elif brush.style == "stipple":
-            out.append(_stipple(st.t, px, brush))
+            out.append(_stipple(st.t, px, brush, st.k))
         elif brush.style == "phase":
             for i in range(len(px) - 1):
                 tm = 0.5 * (st.t[i] + st.t[i + 1])
@@ -205,8 +220,9 @@ def write_svg(path, strokes, cam, brush, background=None, canvas=0):
 
 
 def strokes_to_pixels(strokes, cam, canvas):
-    """(t, pixel-polyline) pairs, for the raster renderer."""
+    """(t, pixel-polyline, |kappa_r|) triples, for the raster renderer."""
     return [(list(st.t),
              cam.ndc_to_canvas(st.ndc, canvas) if canvas
-             else cam.ndc_to_svg(st.ndc))
+             else cam.ndc_to_svg(st.ndc),
+             st.k)
             for st in strokes]

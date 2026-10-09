@@ -17,13 +17,17 @@ parallelize them.
 import argparse
 import json
 import os
+import re
 import statistics
 import sys
 import time
 
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import brushes                                          # noqa: E402
+import curvature                                        # noqa: E402
 from css import COVER_NAMES, FIT_NAMES, Params          # noqa: E402
 from export_io import find_frames, load_frame           # noqa: E402
 from stylizer import Stylizer                           # noqa: E402
@@ -39,8 +43,10 @@ def build_args():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("root", nargs="?", help="frame directory, or a directory "
                                            "of them")
-    p.add_argument("--out", help="output directory "
-                                 "(default: <root>_css next to the input)")
+    p.add_argument("--out", help="output directory.  Default for SVG is "
+                                 "<root>_css beside the input; for PNG it is "
+                                 "the sibling results/png/<name>_css, which "
+                                 "is where make_video.py looks")
     p.add_argument("--start", type=int, default=0, help="first frame index")
     p.add_argument("--end", type=int, help="stop before this frame index")
 
@@ -94,6 +100,33 @@ def build_args():
     g.add_argument("--taper", type=float,
                    help="pixels over which the brush narrows at each stroke "
                         "end (ribbon and texture)")
+    g.add_argument("--taper-mode", choices=["end", "curvature", "both",
+                                            "none"], default="curvature",
+                   help="what drives the width envelope (default "
+                        "curvature).  'end' is jot's: "
+                        "distance from the stroke's own ends, which move "
+                        "whenever a chain splits or an occluder sweeps past, "
+                        "so the envelope swims even though the "
+                        "parameterization under it does not.  'curvature' "
+                        "drives it from the per-node radial curvature "
+                        "instead -- a property of the surface point, hence "
+                        "as coherent as the geometry, and near zero exactly "
+                        "at the cusps where the contour really does end.  "
+                        "'both' multiplies them.  A frame set with no "
+                        "curvature in it falls back to 'end' with a warning, "
+                        "unless you asked for curvature explicitly")
+    g.add_argument("--curv-ref", type=float, default=0.0, metavar="K",
+                   help="|radial curvature| at which the stroke reaches full "
+                        "width.  0 (default) picks the median over the first "
+                        "frame's visible nodes and then HOLDS it: "
+                        "re-normalizing per frame would make a stationary "
+                        "point's width depend on what else is on screen")
+    g.add_argument("--curv-gamma", type=float, default=1.0, metavar="G",
+                   help="shaping exponent on the normalized curvature; "
+                        "below 1 widens the midtones, above 1 thins them")
+    g.add_argument("--curv-floor", type=float, default=0.0, metavar="F",
+                   help="narrowest the envelope goes, as a fraction of full "
+                        "width.  0 lets a stroke taper away to nothing")
     g.add_argument("--press", choices=sorted(PRESS_PROFILES), default="flat",
                    help="width profile within each period (ribbon, texture)")
     g.add_argument("--wiggle", type=float, default=0.0,
@@ -120,6 +153,28 @@ def build_args():
     return p
 
 
+def default_out_dir(root, brush_tag=None):
+    """Where results go when --out is not given.
+
+    SVG lands beside the input as <root>_css.  PNG goes to the sibling
+    results/png/ instead, matching the <png-dir>/<object> layout
+    make_video.py already uses, so a textured run drops straight into the
+    video pipeline with no SVG-to-PNG step.
+
+    The PNG folder is tagged with the brush, e.g. bunny_hr_css_pencil.  Plain
+    <name>_css would collide with the folder make_video.py fills when it
+    rasterizes the SVG run of the same name, silently destroying it."""
+    root = root.rstrip(os.sep)
+    base = os.path.basename(root) + "_css"
+    if brush_tag:
+        parent, tail = os.path.split(os.path.dirname(root))
+        name = base + "_" + re.sub(r"[^A-Za-z0-9._-]+", "-", brush_tag)
+        if tail == "rendering":
+            return os.path.join(parent, "png", name)
+        return os.path.join(os.path.dirname(root), name)
+    return root + "_css"
+
+
 def _hex_to_rgb(s):
     s = s.lstrip("#")
     return tuple(int(s[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
@@ -130,7 +185,9 @@ def resolve_brush(args):
     pre = brushes.Preset.load(args.preset) if args.preset else None
 
     style = args.style
-    if pre is not None and pre.texture and "--style" not in sys.argv:
+    if pre is not None and "--style" not in sys.argv:
+        # jot draws a preset as a textured quad strip, solid when the preset
+        # names no texture.  Honour that whether or not it has one.
         style = "texture"
 
     width = args.width
@@ -145,12 +202,41 @@ def resolve_brush(args):
     if taper is None:
         taper = pre.taper if pre else 0.0
 
-    texture = args.texture or (pre.texture if pre else None) or DEFAULT_TEXTURE
+    texture = args.texture or (pre.texture if pre else None)
+    if texture is None and pre is None:
+        texture = DEFAULT_TEXTURE
 
     brush = Brush(style=style, width=width, color=color, duty=args.duty,
                   wiggle=args.wiggle, wiggle_profile=args.wiggle_profile,
                   taper=taper, press_profile=args.press, opacity=opacity)
+    brush.envelope = brushes.Envelope(args.taper_mode, taper_px=taper,
+                                      ref=args.curv_ref,
+                                      gamma=args.curv_gamma,
+                                      floor=args.curv_floor)
     return brush, texture, pre
+
+
+def _auto_curv_ref(frame):
+    """Median |kappa_r| over this frame's VISIBLE nodes.
+
+    Visible only: the far side of the surface carries the opposite sign and a
+    different magnitude (on the bunny, 58% of hidden nodes are negative
+    against 0.3% of visible ones), so including it would move the reference
+    for reasons the viewer never sees.
+    """
+    vals = []
+    for c in frame.chains:
+        if c.kappa is None:
+            continue
+        vis = np.zeros(len(c.wpts), dtype=bool)
+        vis[:-1] |= c.edge_vis
+        vis[1:] |= c.edge_vis
+        k = np.abs(c.kappa[vis])
+        vals.append(k[np.isfinite(k)])
+    if not vals:
+        return 0.0
+    allk = np.concatenate(vals)
+    return float(np.median(allk)) if len(allk) else 0.0
 
 
 def main(argv=None):
@@ -176,9 +262,6 @@ def main(argv=None):
                  "under %s" % root)
     frames = frames[args.start:args.end]
 
-    out_dir = args.out or (root.rstrip(os.sep) + "_css")
-    os.makedirs(out_dir, exist_ok=True)
-
     try:
         brush, texture_name, preset = resolve_brush(args)
     except FileNotFoundError as e:
@@ -188,10 +271,14 @@ def main(argv=None):
     period = args.period_pix
     if brush.style == "texture":
         import raster
-        try:
-            tex = brushes.load_texture(texture_name)
-        except FileNotFoundError as e:
-            sys.exit("%s\n(run --list-brushes to see what is available)" % e)
+        if preset and not args.texture:
+            tex, texture_name = brushes.preset_texture(preset)
+        else:
+            try:
+                tex = brushes.load_texture(texture_name)
+            except FileNotFoundError as e:
+                sys.exit("%s\n(run --list-brushes to see what is available)"
+                         % e)
         if not args.canvas:
             sys.exit("--style texture needs a fixed canvas; pass --canvas 840")
         if period is None:
@@ -206,6 +293,14 @@ def main(argv=None):
                                    8.0), 240.0))
     if period is None:
         period = 30.0
+
+    tag = None
+    if tex is not None:
+        tag = (os.path.splitext(preset.name)[0] if preset
+               else os.path.splitext(os.path.basename(texture_name))[0]
+               if texture_name else "solid")
+    out_dir = args.out or default_out_dir(root, tag)
+    os.makedirs(out_dir, exist_ok=True)
 
     params = Params(
         fit_type=FIT_NAMES[args.fit],
@@ -223,20 +318,62 @@ def main(argv=None):
         seed=args.seed,
     )
 
-    if not args.quiet:
-        print("brush: %s  width %.1f  period %.0fpx%s%s"
+    def describe_brush():
+        """Printed after the first frame, not before: the envelope is only
+        settled once we know whether that frame carries curvature."""
+        env = brush.envelope
+        taper = (env.mode if not env.taper_px or env.mode == "curvature"
+                 else "%s/%.0fpx" % (env.mode, env.taper_px))
+        print("brush: %s  width %.1f  period %.0fpx%s%s  taper %s"
               % (brush.style, brush.width, period,
-                 "  texture " + texture_name if tex is not None else "",
-                 "  preset " + preset.name if preset else ""))
+                 "  texture " + (texture_name or "solid")
+                 if tex is not None else "",
+                 "  preset " + preset.name if preset else "", taper))
 
     sty = Stylizer(params)
     t0 = time.time()
     totals = {"votes": 0, "strokes": 0, "groups": 0}
     resid, sizes = [], set()
 
+    curv_src = None
+    asked_for_curvature = "--taper-mode" in sys.argv
     for i, d in enumerate(frames):
         name = os.path.basename(d.rstrip(os.sep)) or "frame"
         frame = load_frame(d)
+
+        if brush.envelope.needs_curvature:
+            src = curvature.load(d, frame.cam, frame.chains)
+            if src is None:
+                msg = ("%s carries no per-node radial curvature: neither %s "
+                       "nor a %s with data-radial-curvature.  See README "
+                       "\"Radial curvature\"."
+                       % (d, curvature.KAPPA, curvature.QI_SVG))
+                if asked_for_curvature:
+                    sys.exit("--taper-mode %s needs it.  %s"
+                             % (brush.envelope.mode, msg))
+                # Curvature is only the DEFAULT here, not a request, so fall
+                # back to the taper jot itself would have used rather than
+                # refusing to draw an older export.
+                sys.stderr.write("warning: %s\n         falling back to "
+                                 "--taper-mode end\n" % msg)
+                # needs_curvature is False from here on, so later frames
+                # skip this block entirely.
+                brush.envelope = brushes.Envelope("end",
+                                                  taper_px=brush.taper)
+            elif curv_src is None:
+                curv_src = src
+                if brush.envelope.ref <= 0.0:
+                    brush.envelope.ref = _auto_curv_ref(frame)
+                if brush.envelope.ref <= 0.0:
+                    sys.exit("curvature field is empty or all NaN in %s" % d)
+                if not args.quiet:
+                    print("curvature: %s, reference |kappa_r| = %.4f "
+                          "(gamma %.2f, floor %.2f)"
+                          % (src, brush.envelope.ref, brush.envelope.gamma,
+                             brush.envelope.floor))
+
+        if i == 0 and not args.quiet:
+            describe_brush()
 
         if args.incoherent:
             sty.samples = []
@@ -249,7 +386,8 @@ def main(argv=None):
                 strokes_to_pixels(res.strokes, frame.cam, args.canvas),
                 args.canvas, tex, width=brush.width, taper_px=brush.taper,
                 wiggle_px=brush.wiggle, wiggle_profile=brush.wiggle_profile,
-                press_profile=brush.press_profile, ss=args.ss)
+                press_profile=brush.press_profile, ss=args.ss,
+                envelope=brush.envelope)
             raster.write_png(
                 os.path.join(out_dir, name + ".png"), cov,
                 color=_hex_to_rgb(brush.color), alpha=brush.opacity,

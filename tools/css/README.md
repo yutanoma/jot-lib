@@ -36,8 +36,10 @@ Only numpy is required.
 |---|---|
 | `--style` | which mark to lay down: see **Brushes** below. |
 | `--period-pix N` | pixels per unit of stroke parameter: the stylization period. 30 by default for vector brushes; textures derive their own. |
+| `--out DIR` | where results go. Default for SVG is `<root>_css` beside the input; PNG goes to the sibling `results/png/<name>_css_<brush>/` instead — see **Where output lands** below. |
 | `--canvas N` | render every frame on a fixed N×N canvas. The exporter crops each frame differently (70 distinct sizes over the bunny sequence), so without this the output varies in size. Default 0 mirrors each frame's own crop, which overlays the exporter's own SVGs exactly. Required for textured brushes. |
 | `--fit`, `--cover` | jot's fit and coverage policies. Defaults match jot: `optimize` / `hybrid`. |
+| `--taper-mode` | what drives a stroke's width envelope. Defaults to `curvature`, which is **not** what jot does — see **Radial curvature** below. `end` restores jot's behaviour. |
 | `--report` | per-frame propagation stats plus the swimming measure described below. |
 | `--incoherent` | drop propagation entirely, for comparison. |
 
@@ -50,7 +52,19 @@ surface. A mark driven by screen arclength instead — SVG's own
 `stroke-dasharray`, for one — swims, which is the artifact the paper exists
 to fix.
 
-`--list-brushes` prints every preset and texture available.
+### Seeing them
+
+`--list-brushes` prints the names. To actually look at them, `brush_sheet.py`
+renders one frame with every brush and tiles the results:
+
+    python3 brush_sheet.py <results-dir> --what all --out sheets/
+
+That writes `brushes_styles.png` (the vector brushes and their modifiers),
+`brushes_presets.png` (all 29 jot presets) and `brushes_textures.png` (all
+114 jot textures). Tiles are a 1:1 crop centred on the drawing so the brush
+character is visible; `--whole` fits the whole figure instead, and
+`--tile WxH` / `--cols N` control the grid. Budget about a minute for the
+texture sheet.
 
 ### Vector brushes (write SVG)
 
@@ -94,14 +108,42 @@ coherent for the same reason the dashes are.
         --texture 2D--dot-dash-64 --width 14
 
 `--preset` supplies colour, alpha, width, taper and texture, and implies
-`--style texture`; any explicit flag overrides it. The period defaults to
-`width * (W/H)` so the stamp is not squashed, clamped to [8, 240] px; a
-1-column texture is a pure cross-section with no structure along the stroke,
-so it just takes the 30 px default. `--ss` controls supersampling (2 by
-default).
+`--style texture`; any explicit flag overrides it. Two presets have no usable
+texture -- `wash_blue` names none, and `balloon` names a `noisy1.png` that
+jot does not ship -- and both draw over a solid mask instead, which is what
+jot does for an untextured BaseStroke.
+
+The period defaults to `width * (W/H)` so the stamp is not squashed, clamped
+to [8, 240] px; a 1-column texture is a pure cross-section with no structure
+along the stroke, so it just takes the 30 px default. `--period-pix`
+overrides it, and is the main dial for how a texture reads: the `2D--gauss-*`
+family is a blob centred in its tile, so at the default period the stamps sit
+end to end and bead, while a shorter period overlaps them into a continuous
+ribbed line. `--ss` controls supersampling (2 by default).
 
 SVG cannot warp a bitmap along a curve without an unreasonable number of
 elements, which is why these raster. Expect about 0.5 s/frame.
+
+### Where output lands
+
+Vector runs write SVG to `<root>_css` beside the input, e.g.
+`results/rendering/bunny_hr_css/`. Textured runs write PNG to the sibling
+`results/png/` instead, matching the `<png-dir>/<object>` layout
+`make_video.py` already uses, so they drop straight into the video pipeline
+with no SVG-to-PNG step:
+
+    results/rendering/bunny_hr        ->  results/png/bunny_hr_css_pencil
+
+The folder is tagged with the preset or texture name. That matters: a plain
+`bunny_hr_css` would collide with the folder `make_video.py` fills when it
+rasterizes the SVG run of the same name, and would silently destroy it.
+Tagging also lets several brushes coexist. `--out` overrides all of this.
+
+Since the PNGs are already rasterized, build a video straight from them
+rather than going through `make_video.py`:
+
+    ffmpeg -framerate 24 -pattern_type glob -i 'results/png/bunny_hr_css_pencil/*.png' \
+        -c:v libx264 -pix_fmt yuv420p results/videos/bunny_hr_css_pencil.mp4
 
 ### Adding your own
 
@@ -112,6 +154,119 @@ stroke kinks at each period boundary. For a textured one, drop a grayscale +
 alpha PNG anywhere and pass its path to `--texture`. If you want to drive
 something else entirely, `--json` writes the raw (t, position) samples per
 stroke and you can render them however you like.
+
+## Radial curvature
+
+`--taper-mode` decides what drives a stroke's width envelope.  It defaults to
+`curvature`; `end` is what jot does.
+
+`end` narrows the stroke over `--taper` pixels at each of its own ends. Those
+ends are not a property of the surface. They are wherever this frame happened
+to cut the stroke — a chain split, a group
+boundary, an occluder sweeping past — so the envelope moves even when the
+parameterization under it does not. CSS removes the swim from *where the
+marks sit*; the taper puts some of it back in *how wide they are*.
+
+`curvature` drives the envelope from the radial curvature instead:
+
+    kappa_r(x) = (v^T H v) / (|v|^2 |grad f|)        v = x - eye
+
+the normal curvature of the surface in the viewing direction. It belongs to
+the surface point, not to the stroke, so it moves smoothly with the camera
+and knows nothing about chain topology. It also tapers in the right places
+on its own: `v^T H v = 0` is the cusp condition, so `kappa_r -> 0` exactly
+where the contour terminates or doubles back.
+
+On the bunny that is not a hope, it is measurable. Over 40 frames, taking the
+ends of every visible run against their interiors:
+
+| | median `|kappa_r|` | fraction below 0.2 |
+|---|---|---|
+| ends of visible runs (n=946) | 0.0000 | 52% |
+| interiors (n=95429) | 1.6040 | 1.5% |
+
+The ends of the visible contour here really are cusps, and the curvature
+field finds them without being told where a stroke stops.
+
+### Is it actually steadier?
+
+The taper does not touch stroke geometry, so one run supplies both envelopes
+and they can be compared on identical samples. Match each sample of frame *i*
+to the nearest point of frame *i+1*'s curves (within 1.5 px — 39% match, the
+rest being contour that genuinely appeared or vanished) and ask how much the
+envelope at a fixed place on screen changed. 60 frames, 12194 matched pairs:
+
+| envelope | spread | mean &#124;d&#124; | p95 &#124;d&#124; | jumps > 0.25 | mean/spread |
+|---|---|---|---|---|---|
+| end taper, 20 px | 0.232 | 0.056 | 0.420 | 7.6% | 0.241 |
+| end taper, 40 px | 0.257 | 0.061 | 0.395 | 7.7% | 0.237 |
+| curvature, gamma 0.5 | 0.158 | 0.030 | 0.146 | 2.9% | 0.189 |
+| curvature, gamma 1.0 (default) | 0.192 | 0.038 | 0.213 | 4.1% | 0.198 |
+| curvature, gamma 1.5 | 0.222 | 0.043 | 0.254 | 5.1% | 0.195 |
+
+`python3 taper_check.py <results-dir> --frames 60` reproduces that table;
+re-run it once the exporter writes the real curvature file.
+
+`spread` is the standard deviation of the envelope over the whole sequence,
+and it is in the table because a constant envelope would score a perfect
+zero: the curvature rows look better partly because at these settings they
+vary less. The honest comparison is the row with matching spread — gamma 1.5
+against the 20 px end taper — and there it is still 23% steadier on the mean,
+40% on the p95, and a third fewer of the jumps large enough to see.
+Lengthening the end taper does not close the gap (0.237 vs 0.241 normalized),
+which is the point: its instability is structural, not a tuning artifact.
+
+What remains is real. The 0.016% of visible nodes with no curvature value are
+far too few to explain the tail, so the surviving jumps are cusps genuinely
+sweeping across the drawing — an event, not an artifact.
+
+`--taper-mode both` multiplies the two, which is what you want if strokes get
+cut by occluders often: geometry sets the width, and the stroke still closes
+cleanly where an occluder, rather than a cusp, ended it.
+
+### Normalization
+
+`--curv-ref` is the curvature at which a stroke reaches full width. Left at 0
+it is the median `|kappa_r|` over the **first** frame's visible nodes and is
+then held fixed. Do not make this per-frame: normalizing by each frame's own
+range would make a stationary point's width depend on what else is on screen,
+which is precisely the swimming being removed.
+
+`--curv-gamma` shapes the ramp (below 1 widens the midtones), `--curv-floor`
+sets how thin it is allowed to get. The field spans a wide range — on the
+bunny's visible nodes, p01 0.07 to p99 16 around a median of 1.6 — so some
+shaping is not optional; a raw proportionality leaves almost everything at
+hairline.
+
+Two chains on this model sit near `|kappa_r|` 0.12 and 0.34 throughout. They
+are genuinely flat and will draw uniformly thin. That is the feature working,
+but raise `--curv-floor` if you would rather they stayed visible.
+
+### The file
+
+Preferred, and what the exporter should write:
+
+    contour_export_3d_radial_curvature.txt
+
+one float per OBJ vertex, in the OBJ's own `v` order, one per line — exactly
+the convention of the sibling `_visibility.txt` files. `nan` for a node whose
+curvature could not be evaluated; never a silent 0, which is indistinguishable
+from a genuine cusp. The reader treats `nan` as "no opinion" and draws full
+width there.
+
+In krawczyk-contours this is a few lines next to `writeVisibilityFile`.
+`computeChainNodeRadialCurvature` and `buildContour3dPolylines` already run on
+the same `g_refinedContourBeadChains`, node for node, so for emitted chain `c`
+the value for OBJ vertex `chainRanges[c][0] + i` is
+`kappaR[chainSourceIndex[c]][i]`. Gate it on the existing `--emit-curvature`.
+
+Until then there is a fallback, used automatically: the
+`data-radial-curvature` attributes already present in
+`contour_export_bsp_qi.svg` are matched back onto the OBJ by projecting the
+vertices with this frame's camera. It recovers 99.7% of nodes and costs about
+0.15 s per frame. It is a stopgap, not a plan — the QI SVG splits chains at
+crossings and carries positions at pixel precision — but it is why the numbers
+above exist without touching the exporter.
 
 ## Checking that it works
 
@@ -188,6 +343,12 @@ jot's own default next to it.
   `sil_and_crease_texture.C:2480`, which re-declares `fj_1` inside the loop.
 * **`split_looped_groups` is not ported.** It is commented out in jot's own
   pipeline.
+* **Stroke width tapers on radial curvature by default**, where jot tapers on
+  distance from the stroke's ends. This is the one deliberate departure from
+  jot's output rather than from its implementation, and it exists because the
+  end taper is the last part of the drawing CSS's propagation never reached:
+  it keys off stroke ends, which move. `--taper-mode end` restores jot's
+  behaviour exactly. See **Radial curvature** for the measurements.
 
 ## Camera convention
 

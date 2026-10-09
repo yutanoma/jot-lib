@@ -28,13 +28,19 @@ class Chain:
     marks a closed LuboPath (`_pts[0] == _pts.last()`, zxedge_stroke_texture.H:491).
     """
 
-    __slots__ = ("name", "wpts", "wnrm", "edge_vis", "closed")
+    __slots__ = ("name", "wpts", "wnrm", "edge_vis", "closed", "vseq",
+                 "kappa")
 
-    def __init__(self, name, wpts, wnrm, edge_vis):
+    def __init__(self, name, wpts, wnrm, edge_vis, vseq=None):
         self.name = name
         self.wpts = wpts
         self.wnrm = wnrm
         self.edge_vis = edge_vis
+        # The OBJ `v` indices this chain walked, parallel to wpts.  Sibling
+        # per-vertex files (visibility, radial curvature) are in `v` order,
+        # so this is what maps them onto the chain.
+        self.vseq = None if vseq is None else np.asarray(vseq, dtype=np.intp)
+        self.kappa = None
         self.closed = len(wpts) > 2 and np.array_equal(wpts[0], wpts[-1])
 
 
@@ -104,7 +110,8 @@ def load_frame(d):
         seq = [edges[i][0]] + [edges[k][1] for k in range(i, j)]
         if len(seq) >= 2:
             name = objs[o] if 0 <= o < len(objs) else "chain_?"
-            chains.append(Chain(name, verts[seq], norms[seq], evis[i:j]))
+            chains.append(Chain(name, verts[seq], norms[seq], evis[i:j],
+                                seq))
         i = j
 
     return Frame(d, cam, chains)
